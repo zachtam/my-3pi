@@ -1,0 +1,74 @@
+/**
+ * Blink the default LED on the
+ * <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>.
+ * @author Abhi Gundrala
+ * @author Edward A. Lee
+ */
+ target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  threading: false,
+  keepalive: true
+}
+
+import Display from "lib/Display.lf"
+
+preamble {=
+  #include <stdio.h>
+  #include <pico/stdlib.h>
+  #include <hardware/gpio.h>
+=}
+
+main reactor {
+  timer tUp(0, 250 ms);
+  timer tDown(1 ms, 500 ms);
+  state count:int = 0;
+  d = new Display();
+
+  initial mode CountUp {
+    reaction(a) -> CountDown {=
+      lf_set_mode(CountDown);
+    =}
+
+    reaction(tUp) -> d.line0 {=
+      static char buf0[17];
+      snprintf(buf0, 17, "%d", self->count);
+      lf_set(d.line0, buf0);
+      self->count += 1;
+    =}
+  }
+  mode CountDown {
+    reaction(a) -> CountUp {=
+      lf_set_mode(CountUp);
+    =}
+
+    reaction(tDown) -> d.line0 {=
+      static char buf0[17];
+      snprintf(buf0, 17, "%d", self->count);
+      lf_set(d.line0, buf0);
+      self->count -= 1;
+    =}
+  }
+
+  preamble {=
+    static void* action;
+    static void callback(uint gpio, uint32_t event_mask) {
+      lf_schedule(action, 0);
+    }
+  =}
+
+  physical action a
+  reaction(startup) -> a {=
+    action = a;
+    gpio_init(PICO_DEFAULT_LED_PIN);
+    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_IN);
+    gpio_set_irq_enabled_with_callback(
+      PICO_DEFAULT_LED_PIN,
+      GPIO_IRQ_EDGE_FALL,
+      true,
+      &callback
+    );
+  =}
+}
