@@ -1,0 +1,105 @@
+/**
+ * Template for robot driving lab exercises.
+ * This template just periodically switches between a
+ * TURNING and a DRIVING mode, updating the LCD display
+ * on each change of mode.
+ */
+ target C {
+    platform: {
+      name: "rp2040",
+      board: "pololu_3pi_2040_robot"
+    },
+    threading: false,
+  }
+  
+  import Display from "lib/Display.lf"
+  import Motors from "lib/Motors.lf"
+  import Encoders from "lib/Encoders.lf"
+  import AngleToDistance from "RobotEncoderSolution.lf"
+  import GyroAngle from "lib/IMU.lf"
+  
+  reactor Robot {
+    input drive:bool       // Toggle mode.
+    output notify:string   // Notify of mode change.
+    output left_speed:float
+    output right_speed:float
+  
+    reaction(startup) -> notify {=
+      lf_set(notify, "INIT");
+    =}
+  
+    initial mode TURNING {
+      reaction(drive) -> DRIVING, notify, left_speed, right_speed {=
+        if (drive->value) {
+          lf_set_mode(DRIVING);
+          lf_set(notify, "DRIVING");
+          lf_set(left_speed, 0.1f);
+          lf_set(right_speed, 0.105f);
+        }
+      =}
+    }
+  
+    mode DRIVING {
+      reaction(drive) -> TURNING, notify, left_speed, right_speed {=
+        if (!drive->value) {
+          lf_set_mode(TURNING);
+          lf_set(notify, "TURNING");
+          lf_set(left_speed, 0.0f);
+          lf_set(right_speed, 0.1f);
+        }
+      =}
+    }
+  }
+  
+  main reactor {
+    timer t(0, 100 ms)
+    state drive:bool = false
+    state start_gyro_z:float = -1000
+    state start_distance:float = 0
+    robot = new Robot()
+    display = new Display()
+    motors = new Motors()
+    encoders = new Encoders()
+    a2dleft = new AngleToDistance()
+    a2dright = new AngleToDistance()
+    gyro = new GyroAngle()
+
+    reaction(t) -> encoders.trigger, gyro.trigger {=
+      lf_set(encoders.trigger, true);
+      lf_set(gyro.trigger, true);
+    =}
+
+    reaction(gyro.z) -> robot.drive {=
+      if (!self->drive) {
+        if (gyro.z->value - self->start_gyro_z >= 90) {
+          lf_set(robot.drive, true);
+          // Toggle the drive state variable for next time.
+          self->drive = !self->drive;
+        }
+      } else {
+        self->start_gyro_z = gyro.z->value;
+      }
+    =}
+
+    reaction(a2dleft.distance, a2dright.distance) -> robot.drive {=
+      float distance = (a2dleft.distance->value + a2dright.distance->value)/2;
+      if (self->drive) {
+        if (distance - self->start_distance >= 0.5) {
+          lf_set(robot.drive, false);
+          // Toggle the drive state variable for next time.
+          self->drive = !self->drive;
+        }
+      } else {
+        self->start_distance = distance;
+      }
+    =}
+
+
+    robot.notify -> display.line0;
+    robot.left_speed -> motors.left_power
+    robot.right_speed -> motors.right_power
+
+    encoders.left -> a2dleft.angle;
+    encoders.right -> a2dright.angle;
+  }
+  

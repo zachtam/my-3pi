@@ -1,0 +1,65 @@
+/**
+ * Template for robot driving lab exercises.
+ * This template just periodically switches between a
+ * STOPPED and a DRIVING mode, updating the LCD display
+ * on each change of mode.
+ */
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  threading: false,
+}
+
+import Display from "lib/Display.lf"
+import Motors from "lib/Motors.lf"
+
+reactor Robot {
+  input drive:bool       // Toggle mode.
+  output notify:string   // Notify of mode change.
+  output left_speed:float
+  output right_speed:float
+
+  reaction(startup) -> notify {=
+    lf_set(notify, "INIT");
+  =}
+
+  initial mode STOPPED {
+    reaction(drive) -> DRIVING, notify, left_speed, right_speed {=
+      if (drive->value) {
+        lf_set_mode(DRIVING);
+        lf_set(notify, "DRIVING");
+        lf_set(left_speed, 0.1f);
+        lf_set(right_speed, 0.1f);
+      }
+    =}
+  }
+
+  mode DRIVING {
+    reaction(drive) -> STOPPED, notify, left_speed, right_speed {=
+      if (!drive->value) {
+        lf_set_mode(STOPPED);
+        lf_set(notify, "STOPPED");
+        lf_set(left_speed, 0.0f);
+        lf_set(right_speed, 0.0f);
+      }
+    =}
+  }
+}
+
+main reactor {
+  timer t(0, 2 sec)
+  state drive:bool = false
+  robot = new Robot()
+  display = new Display()
+  motors = new Motors()
+  reaction(t) -> robot.drive {=
+      lf_set(robot.drive, self->drive);
+      // Toggle the drive state variable for next time.
+      self->drive = !self->drive;
+  =}
+  robot.notify -> display.line0;
+  robot.left_speed -> motors.left_power
+  robot.right_speed -> motors.right_power
+}

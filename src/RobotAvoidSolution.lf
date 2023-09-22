@@ -1,0 +1,158 @@
+/**
+ * Template for robot driving lab exercises.
+ * This template just periodically switches between a
+ * TURNING and a DRIVING mode, updating the LCD display
+ * on each change of mode.
+ */
+ target C {
+    platform: {
+      name: "rp2040",
+      board: "pololu_3pi_2040_robot"
+    },
+    threading: false,
+  }
+  
+  import Display from "lib/Display.lf"
+  import Motors from "lib/Motors.lf"
+  import Encoders from "lib/Encoders.lf"
+  import AngleToDistance from "RobotEncoderSolution.lf"
+  import GyroAngle from "lib/IMU.lf"
+  import Bump from "lib/Bump.lf"
+  
+  reactor Robot {
+    input drive_mode:int       // TURNING = 0, DRIVING = 1, AVOIDING = 2
+    output notify:string   // Notify of mode change.
+    output left_speed:float
+    output right_speed:float
+  
+    reaction(startup) -> notify {=
+      lf_set(notify, "INIT");
+    =}
+  
+    initial mode TURNING {
+      reaction(drive_mode) -> DRIVING, AVOIDING, notify, left_speed, right_speed {=
+        if (drive_mode->value == 1) {
+          lf_set_mode(DRIVING);
+          lf_set(notify, "DRIVING");
+          lf_set(left_speed, 0.1f);
+          lf_set(right_speed, 0.105f);
+        }
+        if (drive_mode->value == 2) {
+          lf_set_mode(AVOIDING);
+          lf_set(notify, "AVOIDING");
+          lf_set(left_speed, -0.12f);
+          lf_set(right_speed, -0.105f);
+        }
+      =}
+    }
+  
+    mode DRIVING {
+      reaction(drive_mode) -> TURNING, AVOIDING, notify, left_speed, right_speed {=
+        if (drive_mode->value == 0) {
+          lf_set_mode(TURNING);
+          lf_set(notify, "TURNING");
+          lf_set(left_speed, 0.0f);
+          lf_set(right_speed, 0.1f);
+        }
+        if (drive_mode->value == 2) {
+          lf_set_mode(AVOIDING);
+          lf_set(notify, "AVOIDING");
+          lf_set(left_speed, -0.12f);
+          lf_set(right_speed, -0.105f);
+        }
+      =}
+    }
+
+    mode AVOIDING {
+      reaction(drive_mode) -> TURNING, DRIVING, notify, left_speed, right_speed {=
+          if (drive_mode->value == 0) {
+            lf_set_mode(TURNING);
+            lf_set(notify, "TURNING");
+            lf_set(left_speed, 0.0f);
+            lf_set(right_speed, 0.1f);
+          }
+          if (drive_mode->value == 1) {
+            lf_set_mode(DRIVING);
+            lf_set(notify, "DRIVING");
+            lf_set(left_speed, 0.1f);
+            lf_set(right_speed, 0.105f);
+          }
+      =}
+    }
+  }
+  
+  main reactor {
+    timer t(0, 100 ms)
+    state drive_mode:int = 0 // start in TURNING
+    state start_gyro_z:float = -1000
+    state start_distance:float = 0
+    state normal_mode:int
+    logical action return_to_normal
+    robot = new Robot()
+    display = new Display()
+    motors = new Motors()
+    encoders = new Encoders()
+    bump = new Bump()
+    a2dleft = new AngleToDistance()
+    a2dright = new AngleToDistance()
+    gyro = new GyroAngle()
+
+    reaction(t) -> encoders.trigger, gyro.trigger {=
+      lf_set(encoders.trigger, true);
+      lf_set(gyro.trigger, true);
+    =}
+
+    reaction(gyro.z) -> robot.drive_mode {=
+      if (self->drive_mode == 0) {
+        if (gyro.z->value - self->start_gyro_z >= 90) {
+          lf_set(robot.drive_mode, 1);
+          // Toggle the drive state variable for next time.
+          self->drive_mode = 1;
+        }
+      } else if (self->drive_mode == 1) {
+        self->start_gyro_z = gyro.z->value;
+      // } else if (self->drive_mode == 2) {
+      //   lf_set(robot.drive_mode, 2);
+      //   self->normal_mode = 
+      //   lf_schedule(return_to_normal, 2)
+      }
+    =}
+
+    reaction(a2dleft.distance, a2dright.distance) -> robot.drive_mode {=
+      float distance = (a2dleft.distance->value + a2dright.distance->value)/2;
+      if (self->drive_mode == 1) {
+        if (distance - self->start_distance >= 0.5) {
+          lf_set(robot.drive_mode, 0);
+          // Toggle the drive state variable for next time.
+          self->drive_mode = 0;
+        }
+      } else if (self->drive_mode == 0) {
+        self->start_distance = distance;
+      // } else if (self->drive_mode == 2) {
+      //   lf_set(robot.drive_mode, 2);
+      //   lf_schedule(return_to_normal, 2)
+      }
+    =}
+
+    reaction(bump.left, bump.right) -> robot.drive_mode, return_to_normal {=
+      if (self->drive_mode != 2) {
+        self->normal_mode = self->drive_mode;
+        self->drive_mode = 2;
+        lf_set(robot.drive_mode, 2);
+        lf_schedule(return_to_normal, SEC(2));
+      }
+    =}
+
+    reaction(return_to_normal) -> robot.drive_mode {=
+      lf_set(robot.drive_mode, self->normal_mode);
+      self->drive_mode = self->normal_mode;
+    =}
+
+    robot.notify -> display.line0;
+    robot.left_speed -> motors.left_power;
+    robot.right_speed -> motors.right_power;
+
+    encoders.left -> a2dleft.angle;
+    encoders.right -> a2dright.angle;
+  }
+  
