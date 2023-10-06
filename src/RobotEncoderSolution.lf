@@ -1,0 +1,57 @@
+/**
+ * Display encoder measurements from the wheels of the
+ * <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>.
+ * @author Abhi Gundrala
+ * @author Edward A. Lee
+ */
+ target C {
+    platform: {
+      name: "rp2040",
+      board: "pololu_3pi_2040_robot"
+    },
+    threading: false,
+  }
+  
+  import Display from "lib/Display.lf"
+  import Encoders from "lib/Encoders.lf"
+  
+  reactor AngleToDistance {
+    input angle:int32_t
+    output distance:float
+  
+    reaction(angle) -> distance {=
+      lf_set(distance, (angle->value/360.0f)*(3.14159f * 3.175e-2f));
+    =}
+  }
+  
+  main reactor {
+    display = new Display()
+    encoder = new Encoders()
+    a2dleft = new AngleToDistance()
+    a2dright = new AngleToDistance()
+  
+    encoder.left -> a2dleft.angle;
+    encoder.right -> a2dright.angle;
+  
+    timer t(0, 1s)
+  
+    reaction(t) -> encoder.trigger {=
+      lf_set(encoder.trigger, true);
+    =}
+  
+    reaction(startup) -> display.line0 {=
+      lf_set(display.line0, "ENCODERS:");
+    =}
+  
+    reaction(a2dleft.distance) -> display.line1 {=
+      static char buf[17];
+      snprintf(buf, 17, "L: %f", a2dleft.distance->value);
+      lf_set(display.line1, buf);
+    =}
+    
+    reaction(a2dright.distance) -> display.line2 {=
+      static char buf[17];
+      snprintf(buf, 17, "R: %f", a2dright.distance->value);
+      lf_set(display.line2, buf); 
+    =}
+  }

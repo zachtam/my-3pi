@@ -1,0 +1,34 @@
+target C {
+    platform: "RP2040",
+    threading: false,
+}
+
+import Accelerometer from "IMU.lf"
+
+reactor Tilt {    
+  a = new Accelerometer();
+
+  output pitch:float;
+  output roll:float;
+  timer t(0, 250 msec)
+  reaction(t) -> a.trigger {=
+      lf_set(a.trigger, true);
+  =}
+
+  reaction(a.x, a.y, a.z) -> pitch, roll {=
+    // calculate sensitivity and bias
+    static float x_bias = 0.0122;
+    static float y_bias = -0.0082;
+    static float z_bias = -0.03;
+    static float x_sens = 1.0 / (1.0037 - 0.0143);
+    static float y_sens = 1.0 / (0.9816 - (-0.0180));
+    static float z_sens = 1.0 / (1.0172 -0.0336);
+    float a_x = x_bias + x_sens*a.x->value;
+    float a_y = y_bias + y_sens*a.y->value;
+    float a_z = z_bias + z_sens*a.z->value;
+
+    // output pitch and roll
+    lf_set(pitch, atan2(a_x, sqrt(a_z*a_z + a_y*a_y)) * (180/3.1415926535));
+    lf_set(roll, -atan2(a_y, sqrt(a_z*a_z + a_x*a_x)) * (180/3.1415926535));
+  =}
+}
