@@ -85,6 +85,16 @@ reactor Accelerometer extends IMUBase {
   =}
 }
 
+reactor Magnetometer extends IMUBase {
+  reaction(trigger) -> x, y, z {=
+    axes_data_t mag_data;
+    imu_read_mag(&imu_instance, &mag_data);
+    lf_set(x, mag_data.x);
+    lf_set(y, mag_data.y);
+    lf_set(z, mag_data.z);
+  =}
+}
+
 /**
  * Integrate the sequence of inputs using the trapezoidal method.
  * The first output is always zero.  Subsequent outputs are the
