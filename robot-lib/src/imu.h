@@ -18,6 +18,15 @@
 #define _IMU_OUTX_L_G 0x22
 #define _IMU_OUTX_L_XL 0x28
 
+#define _IMU_ADDR_MAG 0b0011110
+#define _IMU_CTRL_REG1 0x20
+#define _IMU_CTRL_REG2 0x21
+#define _IMU_CTRL_REG3 0x22
+#define _IMU_CTRL_REG4 0x23
+#define _IMU_CTRL_REG5 0x24
+#define _IMU_STATUS_REG_M 0x27
+#define _IMU_OUTX_L_M 0x28
+
 typedef struct _imu_inst {
     uint32_t set_baud;
     bool status;
@@ -47,6 +56,12 @@ uint imu_read_acc(imu_inst_t* imu_inst, axes_data_t* acc_data);
 /// for each axis.
 /// @param gyro_data 
 uint imu_read_gyro(imu_inst_t* imu_inst, axes_data_t* gyro_data);
+
+/// @brief fills the provided memory space
+/// with the magnetometer data in microTesla
+/// for each axis.
+/// @param mag_data 
+uint imu_read_mag(imu_inst_t* imu_inst, axes_data_t* mag_data);
 
 // private helpers
 /// @brief sets configuration registers

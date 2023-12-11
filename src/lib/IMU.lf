@@ -49,6 +49,15 @@ reactor IMUBase {
   =}
 }
 
+reactor Magnetometer extends IMUBase {
+  reaction(trigger) -> x, y, z {= 
+    axes_data_t mag_data;
+    imu_read_mag(&imu_instance, &mag_data);
+    lf_set(x, mag_data.x);
+    lf_set(y, mag_data.y);
+    lf_set(z, mag_data.z);   
+  =}
+}
 /**
  * When triggered by an input (whose value is ignored), sample the accelerometer
  * on the <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>.
@@ -61,7 +70,17 @@ reactor Accelerometer extends IMUBase {
   reaction(trigger) -> x, y, z {= 
     axes_data_t acc_data;
     imu_read_acc(&imu_instance, &acc_data);
-
+    float mx, my, mz;
+    float bx, by, bz;
+    //bx = 0.01;
+    //mx = 1.001 - bx;
+    //by = -0.01;
+    //my = 1.012 - by;
+    //bz = 0.015;
+    //mz = 1.013 - bz;
+    //lf_set(x, mx * acc_data.x + bx);
+    //lf_set(y, my * acc_data.y + by);
+    //lf_set(z, mz * acc_data.z + bz);   
     lf_set(x, acc_data.x);
     lf_set(y, acc_data.y);
     lf_set(z, acc_data.z);   

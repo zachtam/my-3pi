@@ -1,0 +1,221 @@
+target C {
+    platform: {
+      name: "rp2040",
+      board: "pololu_3pi_2040_robot"
+    },
+    threading: false,
+}
+preamble {=
+  #include <stdio.h>
+  #include <pico/stdlib.h>
+  #include <hardware/gpio.h>
+  #define BLUETOOTH_UART uart0
+  #define UART_RX_PIN 29
+  #define START_CHAR 2
+  #define END_CHAR 3
+  // #define START_CHAR 115
+  // #define END_CHAR 101
+=}
+reactor UartReceiver(baud_rate: uint = 9600) {
+  //potentially useful for errors
+  output valid: bool;
+  output rssi: int16_t;
+  output magnetometer: double[3];
+
+  state valid_test: bool = false;
+  state rssi: int16_t; 
+  state mag_x: double; 
+  state mag_y: double; 
+  state mag_z: double; 
+  state uart_int: int16_t;
+  state uart_double: double;
+  state timeout: bool;
+  state last_read_time: interval_t;
+
+  timer t(0, 10ms)
+
+  // start char = 0x02
+  // end char = 0x03
+  // if a packet is dropped and can't find start char after 500ms, time out and go back to idle
+  // similarly, if any section hangs for more 500ms, timeout
+  // after we finish reading mag_z, read until empty or start_char
+  
+  //TODO: Change to interrupt based
+
+  preamble {=
+      static int i = 0;
+      static char readbuf[20];
+      static void* uart_received_action;
+      void read_packet() {
+        printf("working interrupt\n");
+        lf_schedule(uart_received_action, 0);
+      }
+  =}
+  physical action uart_received;
+  reaction(startup) -> valid, uart_received {=
+      //uart_received_action = uart_received;
+      uart_init(BLUETOOTH_UART, self->baud_rate);
+      uart_set_format(BLUETOOTH_UART, 8, 1, UART_PARITY_NONE);
+      //gp28 (tx) gp 29(rx)
+      gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+      //uart_set_irq_enables(BLUETOOTH_UART, true, false); // Enable receive interrupt only
+      //// Set up interrupt handler for UART receive
+      //irq_set_exclusive_handler(UART0_IRQ, &read_packet);
+      //irq_set_enabled(UART0_IRQ, true);
+  =}
+  reaction (t) {=
+    if (lf_time_physical_elapsed() - self->last_read_time > MSEC(100)) {
+      self->timeout = true;
+    }
+    else self->timeout = false;
+  =}
+
+  // remove the while loops and go based on timer
+  method read_int(): bool {=
+      int result;
+      while (uart_is_readable(BLUETOOTH_UART)) {
+        //printf("reading char\n");
+        char c = uart_getc(BLUETOOTH_UART);
+        self->last_read_time = lf_time_physical_elapsed();
+        //printf("current char %c, %d\n", c, (int) c);
+        if (c == ',') {
+          readbuf[i] = NULL;
+          char* endpnt;
+          //printf("rssi readbuf %s\n",readbuf);
+          result = (int)strtol(readbuf, &endpnt, 10);
+          //printf("rssi result: %d\n", result);
+          // add error checking
+          //memset(readbuf, 0, 20);
+          i = 0;
+          if (endpnt == readbuf || *endpnt != NULL) {
+            self->timeout = true;
+            return false;
+          }
+          self->uart_int = result;
+          return true;
+        }
+        readbuf[i] = c;
+        i ++ ;
+      }
+      return false;
+  =}
+  method read_double(): bool {=
+      double result;
+      while (uart_is_readable(BLUETOOTH_UART)) {
+        //printf("reading char\n");
+        char c = uart_getc(BLUETOOTH_UART);
+        self->last_read_time = lf_time_physical_elapsed();
+        //printf("char: %c\n", c);
+        if (c == ',' || c == END_CHAR) {
+          readbuf[i] = NULL;
+          char* endpnt;
+          printf("double |%s| readbuffer\n",readbuf);
+          result = strtod(readbuf, &endpnt);
+          //printf("double |%f|\n",result);
+          // add error checking
+          //memset(readbuf, 0, 20);
+          i = 0;
+          if (endpnt == readbuf || *endpnt != NULL) {
+            self->timeout = true;
+            return false;
+          }
+          self->uart_double = result;
+          return true;
+        }
+        readbuf[i] = c;
+        i++;
+      }
+      return false;
+  =}
+  // if start char drops we read entire next packet until start next char
+  initial mode CLEAR_FIFO {
+    reaction (t) -> reset(IDLE), valid{=
+      lf_set(valid, false);
+      if (self->timeout) {printf("TIMED OUT\n");}
+      self->last_read_time = lf_time_physical_elapsed();
+      if (uart_is_readable(BLUETOOTH_UART)) {
+        printf("CLEARING FIFO\n");
+        char c = uart_getc(BLUETOOTH_UART);
+        if (c == START_CHAR) lf_set_mode(IDLE);
+      }
+    =}
+  }
+
+  mode IDLE {
+    reaction(t) -> reset(READ_MAGNETOMER_Z) {=
+        printf("IDLING\n");
+        if (uart_is_readable(BLUETOOTH_UART)) {
+          lf_set_mode(READ_MAGNETOMER_Z);
+        }
+    =}
+  }
+  
+  mode READ_RSSI {
+    reaction(t) -> reset(READ_MAGNETOMER_X), reset(CLEAR_FIFO) {=
+      printf("Waiting for RSSI\n");
+      bool done = read_int();
+      // at the moment this wont work; need to set last read time when we actually read something
+      if (done) {
+        self->last_read_time = lf_time_physical_elapsed();
+        self->rssi = self->uart_int;
+        lf_set_mode(READ_MAGNETOMER_X);
+      }
+      if (self->timeout) lf_set_mode(CLEAR_FIFO);
+    =}
+  }
+  mode READ_MAGNETOMER_X {
+    reaction(t) -> reset(READ_MAGNETOMER_Y), reset(CLEAR_FIFO) {=
+      printf("Waiting for MAG X\n");
+      bool done = read_double();
+      if (done) {
+        self->last_read_time = lf_time_physical_elapsed();
+        self->mag_x = self->uart_double;
+        lf_set_mode(READ_MAGNETOMER_Y);
+      }
+      if (self->timeout) lf_set_mode(CLEAR_FIFO);
+    =}
+
+  }
+  mode READ_MAGNETOMER_Y {
+    reaction(t) -> reset(READ_MAGNETOMER_Z), reset(CLEAR_FIFO) {=
+      printf("Waiting for MAG Y\n");
+      bool done = read_double();
+      if (done) {
+        self->last_read_time = lf_time_physical_elapsed();
+        self->mag_y = self->uart_double;
+        lf_set_mode(READ_MAGNETOMER_Z);
+      }
+      if (self->timeout) lf_set_mode(CLEAR_FIFO);
+    =}
+
+  }
+  mode READ_MAGNETOMER_Z {
+    reaction(t) -> reset(IDLE), reset(CLEAR_FIFO), magnetometer, rssi, valid {=
+      if (self->timeout) lf_set_mode(CLEAR_FIFO);
+      printf("Waiting for Packet \n");
+      //doing it like this actually does not require a timeout
+      bool read_int = read_int();
+      if (read_int) self->rssi = self->uart_int;
+      bool read_double1 = read_double();
+      if (read_double1) self->mag_x = self->uart_double;
+      bool read_double2 = read_double();
+      if (read_double2) self->mag_y = self->uart_double;
+      bool read_double3 = read_double();
+      if (read_double3) self->mag_z = self->uart_double;
+      bool valid_packet = read_int && read_double1 && read_double2 && read_double3;
+      if (!valid_packet) {
+        lf_set_mode(CLEAR_FIFO);
+      } else {
+        magnetometer->value[0] = self->mag_x;
+        magnetometer->value[1] = self->mag_y;
+        magnetometer->value[2] = self->mag_z;
+        lf_set(valid, true);
+        lf_set(rssi, self->rssi);
+        lf_set_present(magnetometer);
+        lf_set_mode(CLEAR_FIFO);
+        printf("Done");
+      }
+    =}
+  }
+}
+  

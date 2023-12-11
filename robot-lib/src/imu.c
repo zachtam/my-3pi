@@ -8,14 +8,18 @@
 // Output Data Rate
 const uint8_t odr_acc = 0b0011; // 52Hz
 const uint8_t odr_gyro = 0b0101; // 208Hz
+const uint8_t odr_mag = 0b11110; // 40hz, ultra high performance
 
 // Measurement Ranges
 const uint8_t fs_acc = 0b00; // +- 2g
 const uint8_t fs_gyro = 0b110; // +- 2000 dps
+const uint8_t fs_mag = 0b00; // +- 4 gauss
 
 // Sensitivity Multipliers 
 const float sen_acc = 0.061; // mg/LSB 
 const float sen_gyro = 70; // mdps/LSB
+const float sen_mag = 1.0/6842.0; // gauss/lsb
+
 
 uint imu_init(imu_inst_t* imu_inst) {
     uint8_t w_cmd;
@@ -37,6 +41,7 @@ uint imu_init(imu_inst_t* imu_inst) {
     gpio_set_function(5, GPIO_FUNC_I2C);
     gpio_pull_up(5);
 
+    // currently not reading WHO AM I mag register... maybe add if problems
     // read from WHO AM I register
     w_cmd = _IMU_REG_WHO_AM_I;
     // keep bus control
@@ -82,6 +87,29 @@ void _imu_reset() {
         i2c_write_blocking(i2c0, _IMU_ADDR, &(cmd_buf[0]), 1, true);
         i2c_read_blocking(i2c0, _IMU_ADDR, &(cmd_buf[1]), 1, false);
     } while(cmd_buf[1] & 0x01);
+
+    uint8_t cmd_buf_mag[2] = {_IMU_CTRL_REG2, 0x00};
+    i2c_write_blocking(i2c0, _IMU_ADDR_MAG, &(cmd_buf_mag[0]), 1, true);
+    i2c_read_blocking(i2c0, _IMU_ADDR_MAG, &(cmd_buf_mag[1]), 1, false);
+    cmd_buf_mag[1] = (cmd_buf_mag[1] & ~0x08) | 0x08;
+    //blocking until reboot
+    i2c_write_blocking(i2c0, _IMU_ADDR_MAG, cmd_buf_mag, 2, false);
+    do {
+        i2c_write_blocking(i2c0, _IMU_ADDR_MAG, &(cmd_buf_mag[0]), 1, true);
+        i2c_read_blocking(i2c0, _IMU_ADDR_MAG, &(cmd_buf_mag[1]), 1, false);
+    } while(cmd_buf_mag[1] & 0x08);
+
+    i2c_write_blocking(i2c0, _IMU_ADDR_MAG, &(cmd_buf_mag[0]), 1, true);
+    i2c_read_blocking(i2c0, _IMU_ADDR_MAG, &(cmd_buf_mag[1]), 1, false);
+    cmd_buf_mag[1] = (cmd_buf_mag[1] & ~0x04) | 0x04;
+    //blocking until soft reset
+    i2c_write_blocking(i2c0, _IMU_ADDR_MAG, cmd_buf_mag, 2, false);
+    do {
+        i2c_write_blocking(i2c0, _IMU_ADDR_MAG, &(cmd_buf_mag[0]), 1, true);
+        i2c_read_blocking(i2c0, _IMU_ADDR_MAG, &(cmd_buf_mag[1]), 1, false);
+    } while(cmd_buf_mag[1] & 0x04);
+
+
 }
 void _imu_set() {
     // imu general configuration
@@ -95,7 +123,23 @@ void _imu_set() {
     
     uint8_t cmd_acc_buf[2] = {_IMU_REG_CTRL1_XL, 0x00};
     uint8_t cmd_gyro_buf[2] = {_IMU_REG_CTRL2_G, 0x00};
+
+    //masked writes
+    uint8_t cmd_magctrl1_buf[2] = {_IMU_CTRL_REG1, 0x00};
+    i2c_write_blocking(i2c0, _IMU_ADDR_MAG, &(cmd_magctrl1_buf[0]), 1, true);
+    i2c_read_blocking(i2c0, _IMU_ADDR_MAG, &(cmd_magctrl1_buf[1]), 1, false);
+
+    uint8_t cmd_magctrl2_buf[2] = {_IMU_CTRL_REG2, fs_mag << 5 | 0x00};
+    uint8_t cmd_magctrl3_buf[2] = {_IMU_CTRL_REG3, 0x00};
+    uint8_t cmd_magctrl4_buf[2] = {_IMU_CTRL_REG4, 0x0C}; // ultra high performance Z
     
+    uint8_t ctrl1mask = 0b01111100;
+    cmd_magctrl1_buf[1] = (cmd_magctrl1_buf[1] & ~ctrl1mask) | (odr_mag << 2 & ctrl1mask);
+    i2c_write_blocking(i2c0, _IMU_ADDR_MAG, cmd_magctrl1_buf, 2, false);
+    i2c_write_blocking(i2c0, _IMU_ADDR_MAG, cmd_magctrl2_buf, 2, false);
+    i2c_write_blocking(i2c0, _IMU_ADDR_MAG, cmd_magctrl3_buf, 2, false);
+    i2c_write_blocking(i2c0, _IMU_ADDR_MAG, cmd_magctrl4_buf, 2, false);
+
     // write to CTRL1_XL
     cmd_acc_buf[1] = (odr_acc << 4 | fs_acc << 2) | 0b00;
     i2c_write_blocking(i2c0, _IMU_ADDR, cmd_acc_buf, 2, false);
@@ -144,5 +188,27 @@ uint imu_read_gyro(imu_inst_t* imu_inst, axes_data_t* gyro_data) {
     gyro_data->x = (raw[0] * sen_gyro) / 1000.0;
     gyro_data->y = (raw[1] * sen_gyro) / 1000.0;
     gyro_data->z = (raw[2] * sen_gyro) / 1000.0;
+    return 0;
+}
+
+uint imu_read_mag(imu_inst_t* imu_inst, axes_data_t* mag_data) {
+    if (!imu_inst->status) {
+        return -1;
+    }  
+    uint8_t reg = _IMU_OUTX_L_M;
+    uint8_t buf[6];
+    int16_t raw[3];
+    /// TODO: abstract this subroutine
+    /// TODO: add imu_inst checks
+    // read from the register 
+    i2c_write_blocking(i2c0, _IMU_ADDR_MAG, &reg, 1, true);
+    i2c_read_blocking(i2c0, _IMU_ADDR_MAG, buf, 6, false);
+    /// TODO: might be other way
+    for (int i = 0; i < 3; i++) {
+        raw[i] = (buf[(i * 2) + 1] << 8 | buf[i * 2]);
+    }
+    mag_data->x = (raw[0] * sen_mag * 100);
+    mag_data->y = (raw[1] * sen_mag * 100);
+    mag_data->z = (raw[2] * sen_mag * 100);
     return 0;
 }

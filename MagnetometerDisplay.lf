@@ -24,17 +24,12 @@
 import Magnetometer from "lib/IMU.lf"
 import Display from "lib/Display.lf"
 
+// on wall
+// x,y,z
+//.03, 1.1, 0.015
+// flat
+//0.009, -0.006, 1.01
 main reactor {
-<<<<<<< Updated upstream
-    m = new Magnetometer()
-    d = new Display()
-    timer t(0, 250 msec)
-    reaction(t) -> m.trigger {=
-        lf_set(m.trigger, true);
-    =}
-
-    reaction(m.x, m.y, m.z) -> d.line0, d.line1, d.line2 {=
-=======
     a = new Magnetometer()
     d = new Display()
     timer t(0, 250 msec)
@@ -43,25 +38,14 @@ main reactor {
     =}
 
     reaction(a.x, a.y, a.z) -> d.line0, d.line1, d.line2 {=
->>>>>>> Stashed changes
         /// TODO: define max string size for line
         /// based on font you can have 4 or 8 lines 
         static char buf0[17];
         static char buf1[17];
         static char buf2[17];
-<<<<<<< Updated upstream
-
-        snprintf(buf0, 17, "x:%2.4f", m.x->value);
-        snprintf(buf1, 17, "y:%2.4f", m.y->value);
-        snprintf(buf2, 17, "z:%2.4f", m.z->value);
-=======
-        static char buf3[17];
         snprintf(buf0, 17, "x:%2.4f", a.x->value);
         snprintf(buf1, 17, "y:%2.4f", a.y->value);
         snprintf(buf2, 17, "z:%2.4f", a.z->value);
-
-        printf("%2.4f\t%2.4f\t%2.4f\n", a.x->value, a.y->value, a.z->value);
->>>>>>> Stashed changes
         
         lf_set(d.line0, buf0);
         lf_set(d.line1, buf1);

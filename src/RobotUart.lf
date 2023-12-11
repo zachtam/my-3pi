@@ -1,0 +1,37 @@
+/**
+ * Template for robot driving lab exercises.
+ * This template just periodically switches between a
+ * STOPPED and a DRIVING mode, updating the LCD display
+ * on each change of mode.
+ */
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  threading: false,
+}
+
+import Display from "lib/Display.lf"
+import UartReceiver from "UartReceiver.lf"
+
+main reactor {
+  uartrx = new UartReceiver()
+  disp = new Display();
+  reaction(uartrx.valid, uartrx.rssi, uartrx.magnetometer) -> disp.line1, disp.line2 {=
+      if (uartrx.valid->is_present && uartrx.valid->value) {
+        static char buf0[10];
+        static char buf1[25];
+        snprintf(buf0, 10, "rssi:%d", uartrx.rssi->value);
+        snprintf(buf1, 25, "magx: %2.4f", uartrx.magnetometer->value[0]);
+        lf_set(disp.line1, buf0);
+        lf_set(disp.line2, buf1);
+      }
+  =}
+  timer t (0, 1s)
+  reaction(t) -> disp.line0 {=
+      static char buf[15];
+      snprintf(buf, 15, "time: %d", timer_hw->timelr);
+      lf_set(disp.line0, buf);
+  =}
+}
