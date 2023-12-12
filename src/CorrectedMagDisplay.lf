@@ -24,6 +24,10 @@
 import CorrectedMag from "lib/IMU.lf"
 import Display from "lib/Display.lf"
 
+preamble {=
+  #define RAD2DEG 57.2957795131f
+=}
+
 main reactor {
     m = new CorrectedMag()
     d = new Display()
@@ -39,9 +43,8 @@ main reactor {
         static char buf1[17];
         static char buf2[17];
         static char buf3[17];
-        
-        const float RAD2DEG = 57.2957795131f;
-        float heading = atan2(m.y->value, m.x->value)*RAD2DEG;
+
+        float heading = atan2(-m.y->value, m.x->value)*RAD2DEG;
 
         snprintf(buf0, 17, "x:%2.4f", m.x->value);
         snprintf(buf1, 17, "y:%2.4f", m.y->value);

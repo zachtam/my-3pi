@@ -196,17 +196,23 @@ reactor MagGyroAngle {
   reset state heading_internal:float = 0
   reset state prev_gyro:float = 0
   reset state prev_time:instant_t = 0
-  reaction(trigger) -> heading {=
+  reaction(m.x, m.y, g.z) -> heading {=
     instant_t now = lf_time_logical();
     if (self->prev_time > SEC(0)) {
       float interval = ((now - self->prev_time) * 1e-9);
       float heading_predict =
         self->heading_internal + (g.z->value + self->prev_gyro) * interval / 2;
       float heading_correct =
-        atan2(m.y->value, m.x->value)*RAD2DEG;
+        atan2(-m.y->value, m.x->value)*RAD2DEG;
+      while (heading_correct - heading_predict > 180.0) {
+        heading_correct -= 360.0;
+      }
+      while (heading_correct - heading_predict < -180.0) {
+        heading_correct += 360.0;
+      }
       self->heading_internal = (1 - rho)*heading_predict + rho*heading_correct;
     } else {
-      self->heading_internal = atan2(m.y->value, m.x->value)*RAD2DEG;
+      self->heading_internal = atan2(-m.y->value, m.x->value)*RAD2DEG;
     }
     lf_set(heading, self->heading_internal);
     self->prev_gyro = g.z->value;
