@@ -1,0 +1,39 @@
+target C {
+    platform: {
+      name: "rp2040",
+      board: "pololu_3pi_2040_robot"
+    },
+    single-threaded: true
+  }
+
+import Accelerometer, MagGyroAngle from "lib/IMU.lf"
+// import Distance from "lib/Distance.lf"
+// import UartReceiver from "lib/UartReceiver.lf"
+import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
+import Encoders from "Encoders.lf"
+
+preamble {=
+  #define RAD2DEG 57.2957795131f
+=}
+
+main reactor {
+    // possible TODO: recapture calibration data further from computer
+    // however, this is hard due to the short cord (must be plugged in to log data)
+    acc = new Accelerometer()
+    mg = new MagGyroAngle()
+    // dist = new Distance()
+    // recv = new UartReceiver()
+    enc = new Encoders()
+    motors = new MotorsWithFeedback()
+
+    enc.left -> motors.left
+    enc.right -> motors.right
+
+    state vx:float = 0
+    state vy:float = 0
+
+    state beacon_vx:float = 0
+    state beacon_vy:float = 0
+
+    timer t
+}
