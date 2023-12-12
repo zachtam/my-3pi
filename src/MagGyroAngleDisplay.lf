@@ -21,30 +21,24 @@
     threading: false,
 }
 
-import Magnetometer from "lib/IMU.lf"
+import MagGyroAngle from "lib/IMU.lf"
 import Display from "lib/Display.lf"
 
 main reactor {
-    m = new Magnetometer()
+    m = new MagGyroAngle()
     d = new Display()
-    timer t(0, 250 msec)
+    timer t(0, 100 msec)
     reaction(t) -> m.trigger {=
         lf_set(m.trigger, true);
     =}
 
-    reaction(m.x, m.y, m.z) -> d.line0, d.line1, d.line2 {=
+    reaction(m.heading) -> d.line0 {=
         /// TODO: define max string size for line
         /// based on font you can have 4 or 8 lines 
         static char buf0[17];
-        static char buf1[17];
-        static char buf2[17];
 
-        snprintf(buf0, 17, "x:%2.4f", m.x->value);
-        snprintf(buf1, 17, "y:%2.4f", m.y->value);
-        snprintf(buf2, 17, "z:%2.4f", m.z->value);
+        snprintf(buf0, 17, "a:%2.4f", m.heading->value);
         
         lf_set(d.line0, buf0);
-        lf_set(d.line1, buf1);
-        lf_set(d.line2, buf2);
     =}
 }

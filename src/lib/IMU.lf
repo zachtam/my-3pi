@@ -22,6 +22,7 @@ target C {
 preamble {=
   #include <pico/stdlib.h>
   #include <imu.h>
+  #define RAD2DEG 57.2957795131f
 =}
 
 /**
@@ -49,15 +50,6 @@ reactor IMUBase {
   =}
 }
 
-reactor Magnetometer extends IMUBase {
-  reaction(trigger) -> x, y, z {= 
-    axes_data_t mag_data;
-    imu_read_mag(&imu_instance, &mag_data);
-    lf_set(x, mag_data.x);
-    lf_set(y, mag_data.y);
-    lf_set(z, mag_data.z);   
-  =}
-}
 /**
  * When triggered by an input (whose value is ignored), sample the accelerometer
  * on the <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>.
@@ -114,6 +106,30 @@ reactor Magnetometer extends IMUBase {
   =}
 }
 
+reactor CorrectedMag extends IMUBase {
+  reaction(trigger) -> x, y, z {=
+    axes_data_t mag_data;
+    imu_read_mag(&imu_instance, &mag_data);
+
+    // from magneto.c from https://forum.pololu.com/t/correcting-the-balboa-magnetometer/14315
+    // float B {  -64.84,   -6.79,  -32.61};
+
+    // float Ainv {{ 37.37062,  1.49009, -1.22506},
+    //             {  1.49009, 40.46546,  0.47475},
+    //             { -1.22506,  0.47475, 43.94860}};
+
+    float x_centered = mag_data.x - (-64.84);
+    float y_centered = mag_data.y - (-6.79);
+    float z_centered = mag_data.z - (-32.61);
+    float x_corr =   37.37062*x_centered +  1.49009*y_centered + (-1.22506)*z_centered;
+    float y_corr =    1.49009*x_centered + 40.46546*y_centered +    0.47475*z_centered;
+    float z_corr = (-1.22506)*x_centered +  0.47475*y_centered +   43.94860*z_centered;
+    lf_set(x, x_corr);
+    lf_set(y, y_corr);
+    lf_set(z, z_corr);
+  =}
+}
+
 /**
  * Integrate the sequence of inputs using the trapezoidal method.
  * The first output is always zero.  Subsequent outputs are the
@@ -161,4 +177,39 @@ reactor TrapezoidalIntegrator {
   trigger -> g.trigger
   g.x, g.y, g.z -> integrator1.in, integrator2.in, integrator3.in
   integrator1.out, integrator2.out, integrator3.out -> x, y, z
+}
+
+
+reactor MagGyroAngle {
+  preamble {=
+    const float rho = 0.01;
+  =}
+
+  input trigger:bool;
+
+  output heading:float
+
+  g = new Gyro()
+  m = new CorrectedMag()
+
+  (trigger)+ -> g.trigger, m.trigger
+  reset state heading_internal:float = 0
+  reset state prev_gyro:float = 0
+  reset state prev_time:instant_t = 0
+  reaction(trigger) -> heading {=
+    instant_t now = lf_time_logical();
+    if (self->prev_time > SEC(0)) {
+      float interval = ((now - self->prev_time) * 1e-9);
+      float heading_predict =
+        self->heading_internal + (g.z->value + self->prev_gyro) * interval / 2;
+      float heading_correct =
+        atan2(m.y->value, m.x->value)*RAD2DEG;
+      self->heading_internal = (1 - rho)*heading_predict + rho*heading_correct;
+    } else {
+      self->heading_internal = atan2(m.y->value, m.x->value)*RAD2DEG;
+    }
+    lf_set(heading, self->heading_internal);
+    self->prev_gyro = g.z->value;
+    self->prev_time = now;
+  =}
 }
