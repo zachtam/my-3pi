@@ -181,8 +181,8 @@ main reactor {
         //   vright_cmd = ((turn_radius - TURN_AGGRESSION*ROBOT_RADIUS) / turn_radius)*NOMINAL_SPEED;
         // }
 
-        vleft_cmd = (fabsf(absolute_vr) - des_ang_vel*ROBOT_RADIUS);
-        vright_cmd = (fabsf(absolute_vr) + des_ang_vel*ROBOT_RADIUS);
+        vleft_cmd = 1.2*(fabsf(absolute_vr) - des_ang_vel*ROBOT_RADIUS);
+        vright_cmd = 1.2*(fabsf(absolute_vr) + des_ang_vel*ROBOT_RADIUS);
 
         if (vleft_cmd > 2*NOMINAL_SPEED) vleft_cmd = 2*NOMINAL_SPEED;
         if (vleft_cmd < -2*NOMINAL_SPEED) vleft_cmd = -2*NOMINAL_SPEED;
