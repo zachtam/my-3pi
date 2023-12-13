@@ -3,17 +3,24 @@ target C {
       name: "rp2040",
       board: "pololu_3pi_2040_robot"
     },
-    single-threaded: true
+    threading: false
   }
 
 import Accelerometer, MagGyroAngle from "lib/IMU.lf"
-// import Distance from "lib/Distance.lf"
-// import UartReceiver from "lib/UartReceiver.lf"
+import Distance from "lib/Distance.lf"
+import UartReceiver from "lib/UartReceiver.lf"
 import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
-import Encoders from "Encoders.lf"
+import Encoders from "lib/Encoders.lf"
+import Display from "lib/Display.lf"
 
 preamble {=
+  #include <math.h>
   #define RAD2DEG 57.2957795131f
+  #define WHEEL_DIAMETER 0.032 // meters
+  #define COUNTS_PER_REV 360 //CPR
+  #define METERS_PER_TICK (WHEEL_DIAMETER * M_PI) / COUNTS_PER_REV
+  #define ROBOT_RADIUS 0.04 // meters
+  #define NOMINAL_SPEED 0.1 // meters per second
 =}
 
 main reactor {
@@ -21,19 +28,136 @@ main reactor {
     // however, this is hard due to the short cord (must be plugged in to log data)
     acc = new Accelerometer()
     mg = new MagGyroAngle()
-    // dist = new Distance()
-    // recv = new UartReceiver()
+    dist = new Distance()
+    recv = new UartReceiver()
     enc = new Encoders()
     motors = new MotorsWithFeedback()
+    d = new Display()
+    state prev_time:float = 0
 
     enc.left -> motors.left
     enc.right -> motors.right
 
-    state vx:float = 0
-    state vy:float = 0
+    state vel:float = 0
+    state px:float = 0
+    state py:float = 0
+    state prev_time_encs:time = 0
+    state prev_encs:int32_t = 0
+    state encs_vel:float = 0
+    state heading:float = 0
 
     state beacon_vx:float = 0
     state beacon_vy:float = 0
+    state beacon_px:float = 1.0
+    state beacon_py:float = 0
+    state beacon_heading:float = 0
+    state prev_beacon_px:float = 1.0
+    state prev_beacon_py:float = 0
 
-    timer t
+    timer t_enc(50 msec)
+    timer t(150 msec)
+
+    reaction(t_enc) -> enc.trigger {=
+      lf_set(enc.trigger, true);
+    =}
+
+    reaction(t) -> mg.trigger, acc.trigger {=
+      lf_set(mg.trigger, true);
+      lf_set(acc.trigger, true);
+    =}
+
+    reaction(recv.valid, recv.rssi, recv.magnetometer) -> dist.rssi_reading {=
+        if (recv.valid->is_present && recv.valid->value) {
+          lf_set(dist.rssi_reading, recv.rssi->value);
+          self->beacon_heading = atan2(-recv.magnetometer->value[1], recv.magnetometer->value[0]);
+        }
+    =}
+
+    // React to encoder inputs.
+    reaction(enc.left, enc.right) {=
+      // Ignore the first input because we can't estimate speed.
+      instant_t now = lf_time_logical();
+      if (self->prev_time_encs > 0) {
+        interval_t interval = now - self->prev_time_encs;
+
+        // Ignore intervals that are too small. Assume a maximum sample rate of 1kHz.
+        if (interval >= MSEC(1)) {
+          float encs = 0.5f*(enc.left->value + enc.right->value);
+          self->encs_vel = ((encs - self->prev_encs) * METERS_PER_TICK) / (interval * 1e-9f);
+
+          self->prev_encs = encs;
+        }
+      }
+      self->prev_time_encs = now;
+    =}
+
+    reaction(mg.heading, acc.x, dist.distance) -> motors.right_speed, motors.left_speed, d.line0, d.line1, d.line2, d.line3 {=
+      instant_t now = lf_time_logical();
+      const float rho = 0.01f;
+      if (self->prev_time > 0) {
+        interval_t dt = now - self->prev_time;
+        float vel_predict = self->vel + acc.x->value*(dt * 1e-9f);
+        self->vel = (1 - rho)*vel_predict + rho*(self->encs_vel);
+
+        self->heading = mg.heading->value / RAD2DEG;
+
+        // Use sensor data to compute motor speeds
+
+        self->px = self->px + self->vel*cos(self->heading)*(dt * 1e-9f);
+        self->py = self->py + self->vel*sin(self->heading)*(dt * 1e-9f);
+
+        float b = (self->prev_beacon_px - self->px)*cos(self->beacon_heading) + (self->prev_beacon_py - self->py)*sin(self->beacon_heading);
+        float delta_px_sq = (self->prev_beacon_px - self->px)*(self->prev_beacon_px - self->px);
+        float delta_py_sq = (self->prev_beacon_py - self->py)*(self->prev_beacon_py - self->py);
+        float d_sq = dist.distance->value*dist.distance->value;
+        float beacon_motion = -b + sqrt(b*b - delta_px_sq - delta_py_sq + d_sq);
+        self->beacon_px = self->prev_beacon_px + beacon_motion*cos(self->beacon_heading);
+        self->beacon_py = self->prev_beacon_py + beacon_motion*cos(self->beacon_heading);
+        self->prev_beacon_px = self->beacon_px;
+        self->prev_beacon_py = self->beacon_py;
+
+        float point_angle = atan2(self->beacon_py - self->py, self->beacon_px - self->px);
+        float base_angle = 0.5*M_PI + self->heading - point_angle;
+        float dist_to_goal = sqrt((self->beacon_px - self->px)*(self->beacon_px - self->px) + (self->beacon_py - self->py)*(self->beacon_py - self->py));
+        float turn_radius = (0.5*dist_to_goal) / cos(base_angle);
+
+        while (point_angle - self->heading > M_PI) {
+          point_angle -= 2*M_PI;
+        }
+        while (point_angle - self->heading < -M_PI) {
+          point_angle += 2*M_PI;
+        }
+
+        float vleft_cmd = 0;
+        float vright_cmd = 0;
+        if (point_angle > self->heading) {
+          vleft_cmd = ((turn_radius - ROBOT_RADIUS) / turn_radius)*NOMINAL_SPEED;
+          vright_cmd = ((turn_radius + ROBOT_RADIUS) / turn_radius)*NOMINAL_SPEED;
+        } else {
+          vleft_cmd = ((turn_radius + ROBOT_RADIUS) / turn_radius)*NOMINAL_SPEED;
+          vright_cmd = ((turn_radius - ROBOT_RADIUS) / turn_radius)*NOMINAL_SPEED;
+        }
+
+        // Algorithm end
+
+        static char buf0[17];
+        static char buf1[17];
+        static char buf2[17];
+        static char buf3[17];
+
+        snprintf(buf0, 17, "dt:%2.4f", dt);
+        snprintf(buf1, 17, "velp:%2.4f", vel_predict);
+        snprintf(buf2, 17, "vele:%2.4f", self->encs_vel);
+        snprintf(buf3, 17, "b:%2.4f", b);
+        
+        lf_set(d.line0, buf0);
+        lf_set(d.line1, buf1);
+        lf_set(d.line2, buf2);
+        lf_set(d.line3, buf3);
+
+        lf_set(motors.left_speed, vleft_cmd);
+        lf_set(motors.right_speed, vright_cmd);
+      }
+      self->prev_time = now;
+    =}
 }

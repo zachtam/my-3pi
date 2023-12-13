@@ -1,0 +1,27 @@
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true,
+}
+
+preamble {=
+  #include <pico/stdlib.h>
+  #include <math.h>
+=}
+
+reactor Distance {
+  preamble {=
+      static float RSSI_MEASURED = -55; // rssi value at one meter
+      static float ENVIRONMENTAL_FACTOR = 2.4; // value between 2 to 4 (change based on environment)
+  =}
+  input rssi_reading:float;
+  output distance:float;
+  reaction(rssi_reading) -> distance {=
+      // Linear approxamation model
+      lf_set(distance, pow(10, (RSSI_MEASURED - rssi_reading->value) / (10 * ENVIRONMENTAL_FACTOR)));
+      // Implement new model based on curve fitting of data
+      // lf_set(distance, );
+  =}
+}
