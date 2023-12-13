@@ -140,19 +140,19 @@ main reactor {
         // self->prev_beacon_px = self->beacon_px;
         // self->prev_beacon_py = self->beacon_py;
 
-        // self->beacon_vr = 0.99f*(self->beacon_vr) + 0.01f*((dist.distance->value - self->prev_dist) / (dt*1e-9f));
-        // self->prev_dist = dist.distance->value;
+        self->beacon_vr = 0.9f*(self->beacon_vr) + 0.1f*((dist.distance->value - self->prev_dist) / (dt*1e-9f));
+        self->prev_dist = dist.distance->value;
 
-        // float absolute_vr = self->beacon_vr + self->vel*cos(self->angle_to_beacon - self->heading);
-        // self->beacon_vth = -tan(self->angle_to_beacon - self->beacon_heading)*absolute_vr;
-        // self->angle_to_beacon += (dist.distance->value > 0.01) ? (self->beacon_vth / dist.distance->value)*(dt*1e-9f) : 0; // (fabsf(self->beacon_vx * (dt*1e-9f)) < dist.distance->value) ? -asin(self->beacon_vx * (dt*1e-9f) / dist.distance->value) + self->angle_to_beacon : self->angle_to_beacon;
-        // float des_ang_vel = -(1/2.0f)*(self->heading - self->angle_to_beacon);
+        float absolute_vr = self->beacon_vr + self->vel*cos(self->angle_to_beacon - self->heading);
+        self->beacon_vth = -tan(self->angle_to_beacon - self->beacon_heading)*absolute_vr;
+        self->angle_to_beacon += (dist.distance->value > 0.01) ? (self->beacon_vth / dist.distance->value)*(dt*1e-9f) : 0; // (fabsf(self->beacon_vx * (dt*1e-9f)) < dist.distance->value) ? -asin(self->beacon_vx * (dt*1e-9f) / dist.distance->value) + self->angle_to_beacon : self->angle_to_beacon;
+        // float ang_err = self->heading - self->angle_to_beacon;
 
-        float absolute_vr = NOMINAL_SPEED;
+        // float absolute_vr = NOMINAL_SPEED;
         float ang_err = self->heading - self->beacon_heading;
         while (ang_err > 1.5*M_PI) ang_err -= 2*M_PI;
         while (ang_err < -1.5*M_PI) ang_err += 2*M_PI;
-        float des_ang_vel = -(1/2.0f)*(ang_err);
+        float des_ang_vel = -(1/0.5f)*(ang_err);
 
         // Compute direct Dubins car path to breadcrumb
         // float point_angle = atan2(self->beacon_py - self->py, self->beacon_px - self->px);
