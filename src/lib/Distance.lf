@@ -13,15 +13,26 @@ preamble {=
 
 reactor Distance {
   preamble {=
-      static float RSSI_MEASURED = -55; // rssi value at one meter
+      static float RSSI_MEASURED = -70.0; // rssi value at one meter
       static float ENVIRONMENTAL_FACTOR = 2.4; // value between 2 to 4 (change based on environment)
   =}
   input rssi_reading:float;
   output distance:float;
+  state last1:float = -1;
+  state last2:float = -1;
+  state last3:float = -1;
+  state last4:float = -1;
   reaction(rssi_reading) -> distance {=
+      float dist = pow(10, (RSSI_MEASURED - rssi_reading->value) / (10 * ENVIRONMENTAL_FACTOR));
       // Linear approxamation model
-      lf_set(distance, pow(10, (RSSI_MEASURED - rssi_reading->value) / (10 * ENVIRONMENTAL_FACTOR)));
+      if (self->last4 > 0) {
+        lf_set(distance, 0.2*(dist + self->last1 + self->last2 + self->last3 + self->last4));
+      }
       // Implement new model based on curve fitting of data
       // lf_set(distance, );
+      self->last4 = self->last3;
+      self->last3 = self->last2;
+      self->last2 = self->last1;
+      self->last1 = dist;
   =}
 }

@@ -64,18 +64,18 @@ reactor Accelerometer extends IMUBase {
     imu_read_acc(&imu_instance, &acc_data);
     float mx, my, mz;
     float bx, by, bz;
-    //bx = 0.01;
-    //mx = 1.001 - bx;
-    //by = -0.01;
-    //my = 1.012 - by;
-    //bz = 0.015;
-    //mz = 1.013 - bz;
-    //lf_set(x, mx * acc_data.x + bx);
-    //lf_set(y, my * acc_data.y + by);
-    //lf_set(z, mz * acc_data.z + bz);   
-    lf_set(x, acc_data.x);
-    lf_set(y, acc_data.y);
-    lf_set(z, acc_data.z);   
+    bx = 0.0;
+    mx = 1.001 - bx;
+    by = -0.016;
+    my = 1.009 - by;
+    bz = 0.0;
+    mz = 1.031 - bz;
+    lf_set(x, (acc_data.x - bx) / mx);
+    lf_set(y, (acc_data.y - by) / my);
+    lf_set(z, (acc_data.z - bz) / mz);   
+    // lf_set(x, acc_data.x);
+    // lf_set(y, acc_data.y);
+    // lf_set(z, acc_data.z);   
   =}
 }
 

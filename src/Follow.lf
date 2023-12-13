@@ -20,6 +20,7 @@ preamble {=
   #define COUNTS_PER_REV 360 //CPR
   #define METERS_PER_TICK (WHEEL_DIAMETER * M_PI) / COUNTS_PER_REV
   #define ROBOT_RADIUS 0.04 // meters
+  #define TURN_AGGRESSION 3.0
   #define NOMINAL_SPEED 0.1 // meters per second
 =}
 
@@ -46,16 +47,20 @@ main reactor {
     state encs_vel:float = 0
     state heading:float = 0
 
-    state beacon_vx:float = 0
-    state beacon_vy:float = 0
-    state beacon_px:float = 1.0
+    state beacon_vth:float = 0
+    state beacon_vr:float = 0
+    state beacon_px:float = 0
     state beacon_py:float = 0
+    state prev_dist:float = 0
+    state got_first_rssi:bool = false
     state beacon_heading:float = 0
-    state prev_beacon_px:float = 1.0
+    state compass_offset:float = 0
+    state prev_beacon_px:float = 0
     state prev_beacon_py:float = 0
+    state angle_to_beacon:float = 0
 
-    timer t_enc(50 msec)
-    timer t(150 msec)
+    timer t_enc(0, 50 msec)
+    timer t(0, 250 msec)
 
     reaction(t_enc) -> enc.trigger {=
       lf_set(enc.trigger, true);
@@ -69,7 +74,7 @@ main reactor {
     reaction(recv.valid, recv.rssi, recv.magnetometer) -> dist.rssi_reading {=
         if (recv.valid->is_present && recv.valid->value) {
           lf_set(dist.rssi_reading, recv.rssi->value);
-          self->beacon_heading = atan2(-recv.magnetometer->value[1], recv.magnetometer->value[0]);
+          self->beacon_heading = -recv.magnetometer->value[0] / RAD2DEG + self->compass_offset; // atan2(-recv.magnetometer->value[1], recv.magnetometer->value[0]) + self->compass_offset;
         }
     =}
 
@@ -93,49 +98,100 @@ main reactor {
 
     reaction(mg.heading, acc.x, dist.distance) -> motors.right_speed, motors.left_speed, d.line0, d.line1, d.line2, d.line3 {=
       instant_t now = lf_time_logical();
-      const float rho = 0.01f;
+      const float rho = 0.1f;
       if (self->prev_time > 0) {
         interval_t dt = now - self->prev_time;
-        float vel_predict = self->vel + acc.x->value*(dt * 1e-9f);
+        float vel_predict = self->vel + acc.x->value*9.81*(dt * 1e-9f);
         self->vel = (1 - rho)*vel_predict + rho*(self->encs_vel);
 
         self->heading = mg.heading->value / RAD2DEG;
+
+        if (!self->got_first_rssi && dist.distance->value > 0.01) {
+          self->px = 0;
+          self->py = 0;
+          self->beacon_px = dist.distance->value*cos(self->heading);
+          self->beacon_py = dist.distance->value*sin(self->heading);
+          self->beacon_vth = 0;
+          self->beacon_vr = 0;
+          self->prev_dist = dist.distance->value;
+          self->prev_beacon_px = self->beacon_px;
+          self->prev_beacon_py = self->beacon_py;
+          self->compass_offset += self->heading - self->beacon_heading;
+          self->got_first_rssi = true;
+          self->angle_to_beacon = self->heading;
+        }
 
         // Use sensor data to compute motor speeds
 
         self->px = self->px + self->vel*cos(self->heading)*(dt * 1e-9f);
         self->py = self->py + self->vel*sin(self->heading)*(dt * 1e-9f);
 
-        float b = (self->prev_beacon_px - self->px)*cos(self->beacon_heading) + (self->prev_beacon_py - self->py)*sin(self->beacon_heading);
-        float delta_px_sq = (self->prev_beacon_px - self->px)*(self->prev_beacon_px - self->px);
-        float delta_py_sq = (self->prev_beacon_py - self->py)*(self->prev_beacon_py - self->py);
-        float d_sq = dist.distance->value*dist.distance->value;
-        float beacon_motion = -b + sqrt(b*b - delta_px_sq - delta_py_sq + d_sq);
-        self->beacon_px = self->prev_beacon_px + beacon_motion*cos(self->beacon_heading);
-        self->beacon_py = self->prev_beacon_py + beacon_motion*cos(self->beacon_heading);
-        self->prev_beacon_px = self->beacon_px;
-        self->prev_beacon_py = self->beacon_py;
+        // float b = (self->prev_beacon_px - self->px)*cos(self->beacon_heading) + (self->prev_beacon_py - self->py)*sin(self->beacon_heading);
+        // float delta_px_sq = (self->prev_beacon_px - self->px)*(self->prev_beacon_px - self->px);
+        // float delta_py_sq = (self->prev_beacon_py - self->py)*(self->prev_beacon_py - self->py);
+        // float d_sq = dist.distance->value*dist.distance->value;
+        // float det = b*b - delta_px_sq - delta_py_sq + d_sq;
+        // float beacon_motion = -b + (det > 0 ? sqrt(det) : 0);
+        // self->beacon_px = self->prev_beacon_px + beacon_motion*cos(self->beacon_heading);
+        // self->beacon_py = self->prev_beacon_py + beacon_motion*cos(self->beacon_heading);
+        // float delta_norm = sqrt((self->beacon_px - self->px)*(self->beacon_px - self->px) + (self->beacon_py - self->py)*(self->beacon_py - self->py));
+        // self->beacon_px = self->px + (self->beacon_px - self->px)*(dist.distance->value / (delta_norm + 0.01));
+        // self->beacon_py = self->py + (self->beacon_py - self->py)*(dist.distance->value / (delta_norm + 0.01));
+        // self->prev_beacon_px = self->beacon_px;
+        // self->prev_beacon_py = self->beacon_py;
 
-        float point_angle = atan2(self->beacon_py - self->py, self->beacon_px - self->px);
-        float base_angle = 0.5*M_PI + self->heading - point_angle;
-        float dist_to_goal = sqrt((self->beacon_px - self->px)*(self->beacon_px - self->px) + (self->beacon_py - self->py)*(self->beacon_py - self->py));
-        float turn_radius = (0.5*dist_to_goal) / cos(base_angle);
+        // self->beacon_vr = 0.99f*(self->beacon_vr) + 0.01f*((dist.distance->value - self->prev_dist) / (dt*1e-9f));
+        // self->prev_dist = dist.distance->value;
 
-        while (point_angle - self->heading > M_PI) {
-          point_angle -= 2*M_PI;
-        }
-        while (point_angle - self->heading < -M_PI) {
-          point_angle += 2*M_PI;
-        }
+        // float absolute_vr = self->beacon_vr + self->vel*cos(self->angle_to_beacon - self->heading);
+        // self->beacon_vth = -tan(self->angle_to_beacon - self->beacon_heading)*absolute_vr;
+        // self->angle_to_beacon += (dist.distance->value > 0.01) ? (self->beacon_vth / dist.distance->value)*(dt*1e-9f) : 0; // (fabsf(self->beacon_vx * (dt*1e-9f)) < dist.distance->value) ? -asin(self->beacon_vx * (dt*1e-9f) / dist.distance->value) + self->angle_to_beacon : self->angle_to_beacon;
+        // float des_ang_vel = -(1/2.0f)*(self->heading - self->angle_to_beacon);
+
+        float absolute_vr = NOMINAL_SPEED;
+        float ang_err = self->heading - self->beacon_heading;
+        while (ang_err > 1.5*M_PI) ang_err -= 2*M_PI;
+        while (ang_err < -1.5*M_PI) ang_err += 2*M_PI;
+        float des_ang_vel = -(1/2.0f)*(ang_err);
+
+        // Compute direct Dubins car path to breadcrumb
+        // float point_angle = atan2(self->beacon_py - self->py, self->beacon_px - self->px);
+
+        // while (point_angle - self->heading > M_PI) {
+        //   point_angle -= 2*M_PI;
+        // }
+        // while (point_angle - self->heading < -M_PI) {
+        //   point_angle += 2*M_PI;
+        // }
+
+        // float base_angle = 0.5*M_PI + self->heading - point_angle;
+        // float dist_to_goal = dist.distance->value; // sqrt((self->beacon_px - self->px)*(self->beacon_px - self->px) + (self->beacon_py - self->py)*(self->beacon_py - self->py));
+        // float turn_radius = fabsf(cos(base_angle)) < 1e-5f ? 1000.0f : fabsf((0.5f*dist_to_goal) / cos(base_angle));
 
         float vleft_cmd = 0;
         float vright_cmd = 0;
-        if (point_angle > self->heading) {
-          vleft_cmd = ((turn_radius - ROBOT_RADIUS) / turn_radius)*NOMINAL_SPEED;
-          vright_cmd = ((turn_radius + ROBOT_RADIUS) / turn_radius)*NOMINAL_SPEED;
-        } else {
-          vleft_cmd = ((turn_radius + ROBOT_RADIUS) / turn_radius)*NOMINAL_SPEED;
-          vright_cmd = ((turn_radius - ROBOT_RADIUS) / turn_radius)*NOMINAL_SPEED;
+        // if (turn_radius < 0.1f) {
+        //   vleft_cmd = NOMINAL_SPEED;
+        //   vright_cmd = NOMINAL_SPEED;
+        // } else if (point_angle > self->heading) {
+        //   vleft_cmd = ((turn_radius - TURN_AGGRESSION*ROBOT_RADIUS) / turn_radius)*NOMINAL_SPEED;
+        //   vright_cmd = ((turn_radius + TURN_AGGRESSION*ROBOT_RADIUS) / turn_radius)*NOMINAL_SPEED;
+        // } else {
+        //   vleft_cmd = ((turn_radius + TURN_AGGRESSION*ROBOT_RADIUS) / turn_radius)*NOMINAL_SPEED;
+        //   vright_cmd = ((turn_radius - TURN_AGGRESSION*ROBOT_RADIUS) / turn_radius)*NOMINAL_SPEED;
+        // }
+
+        vleft_cmd = (fabsf(absolute_vr) - des_ang_vel*ROBOT_RADIUS);
+        vright_cmd = (fabsf(absolute_vr) + des_ang_vel*ROBOT_RADIUS);
+
+        if (vleft_cmd > 2*NOMINAL_SPEED) vleft_cmd = 2*NOMINAL_SPEED;
+        if (vleft_cmd < -2*NOMINAL_SPEED) vleft_cmd = -2*NOMINAL_SPEED;
+        if (vright_cmd > 2*NOMINAL_SPEED) vright_cmd = 2*NOMINAL_SPEED;
+        if (vright_cmd < -2*NOMINAL_SPEED) vright_cmd = -2*NOMINAL_SPEED;
+
+        if (dist.distance->value < 0.1) {
+          vleft_cmd = 0.0;
+          vright_cmd = 0.0;
         }
 
         // Algorithm end
@@ -145,10 +201,14 @@ main reactor {
         static char buf2[17];
         static char buf3[17];
 
-        snprintf(buf0, 17, "dt:%2.4f", dt);
-        snprintf(buf1, 17, "velp:%2.4f", vel_predict);
-        snprintf(buf2, 17, "vele:%2.4f", self->encs_vel);
-        snprintf(buf3, 17, "b:%2.4f", b);
+        snprintf(buf0, 17, "e:%2.4f", (ang_err)*RAD2DEG);
+        // snprintf(buf1, 17, "dx:%2.4f", cos(self->heading)*(self->beacon_px - self->px) + sin(self->heading)*(self->beacon_py - self->py));
+        // snprintf(buf2, 17, "dy:%2.4f", -sin(self->heading)*(self->beacon_px - self->px) + cos(self->heading)*(self->beacon_py - self->py));
+        snprintf(buf1, 17, "ap:%2.4f", self->heading*RAD2DEG);
+        snprintf(buf2, 17, "ab:%2.4f", self->beacon_heading*RAD2DEG);
+        // snprintf(buf2, 17, "vth:%2.4f", self->beacon_vth);
+        snprintf(buf3, 17, "rssi:%2.4f", dist.distance->value);
+        // snprintf(buf3, 17, "aj:%2.4f", (self->beacon_heading - self->compass_offset)*RAD2DEG);
         
         lf_set(d.line0, buf0);
         lf_set(d.line1, buf1);
